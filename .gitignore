@@ -1,0 +1,6 @@
+/target
+.solff/
+
+# Foundry's incremental build cache for the test fixture. The fixture's out/ is
+# committed on purpose: the tests run against its ASTs without needing forge.
+/tests/fixture/cache/

@@ -1,0 +1,7 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+libs = []
+solc_version = "0.8.34"
+ast = true
