@@ -43,6 +43,11 @@ struct Args {
     #[arg(long)]
     soft: bool,
 
+    /// Treat the arguments as contract names and list every function each
+    /// has (declared and inherited), instead of searching for callers.
+    #[arg(long)]
+    list: bool,
+
     #[arg(long, hide = true)]
     dump_graph: bool,
 }
@@ -105,6 +110,43 @@ fn try_run() -> Result<ExitCode> {
         }
         out.flush()?;
         return Ok(ExitCode::SUCCESS);
+    }
+
+    if args.list {
+        let mut code = ExitCode::SUCCESS;
+        for (i, name) in args.names.iter().enumerate() {
+            let mut nodes = query::contract_functions(&graph, name);
+            if nodes.is_empty() {
+                out.flush()?;
+                eprintln!("no contract matching `{name}`");
+                code = ExitCode::FAILURE;
+                continue;
+            }
+            if args.names.len() > 1 {
+                if i > 0 {
+                    writeln!(out)?;
+                }
+                writeln!(out, "# {name}")?;
+            }
+            // Overridden functions leave the base node behind; keep the most derived.
+            nodes.sort_by_key(|&n| (graph.nodes[n as usize].sig.clone(), graph.inherited_ctx(n).is_some()));
+            nodes.dedup_by_key(|&mut n| {
+                let node = &graph.nodes[n as usize];
+                (node.sig.clone(), node.kind)
+            });
+            nodes.sort_by_key(|&n| graph.name(n));
+            for n in nodes {
+                let full = graph.name(n);
+                let decl = &graph.contracts[graph.nodes[n as usize].decl as usize].display;
+                let line = full.strip_prefix(decl.as_str()).and_then(|f| f.strip_prefix('.')).unwrap_or(&full);
+                match graph.inherited_ctx(n) {
+                    Some(_) => writeln!(out, "{line} (from {decl})")?,
+                    None => writeln!(out, "{line}")?,
+                }
+            }
+        }
+        out.flush()?;
+        return Ok(code);
     }
 
     let mode = if args.soft { render::Mode::Soft } else { render::Mode::Hard };

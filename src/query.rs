@@ -55,3 +55,15 @@ pub fn find_targets(g: &Graph, arg: &str) -> Vec<u32> {
     })
     .collect()
 }
+
+/// Nodes whose concrete contract is `contract` (by name or display name),
+/// i.e. everything the contract has, declared or inherited.
+pub fn contract_functions(g: &Graph, contract: &str) -> Vec<u32> {
+    let contract = contract.trim();
+    (0..g.nodes.len() as u32)
+        .filter(|&n| {
+            let ctx = &g.contracts[g.nodes[n as usize].ctx as usize];
+            ctx.name == contract || ctx.display == contract
+        })
+        .collect()
+}

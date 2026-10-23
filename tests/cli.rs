@@ -311,3 +311,20 @@ fn mixed_compilation_jobs_are_flagged() {
     let o = solff(&p.0, &["--no-cache", "record"]);
     assert!(stderr(&o).contains("artifacts likely come from different compilation jobs"), "{}", stderr(&o));
 }
+
+#[test]
+fn list_contract_functions() {
+    let o = query(&["--list", "Vault"]);
+    assert!(o.status.success());
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"deposit"));
+    assert!(lines.contains(&"entry (from Base)"));
+    // An override appears once, as the most derived.
+    assert_eq!(lines.iter().filter(|l| l.starts_with("_hook")).count(), 1);
+    assert!(lines.contains(&"_hook"));
+
+    let o = query(&["--list", "Nope"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("no contract matching `Nope`"));
+}
