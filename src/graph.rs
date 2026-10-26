@@ -86,6 +86,17 @@ impl Graph {
         s
     }
 
+    /// `Concrete.function`: the contract the function is called on, not where it is declared.
+    pub fn concrete_name(&self, n: u32) -> String {
+        let name = self.name(n);
+        let decl = &self.contracts[self.nodes[n as usize].decl as usize].display;
+        let ctx = &self.contracts[self.nodes[n as usize].ctx as usize].display;
+        match name.strip_prefix(decl.as_str()) {
+            Some(rest) => format!("{ctx}{rest}"),
+            None => name,
+        }
+    }
+
     /// The concrete contract the function runs under, when it is not the declaring one.
     pub fn inherited_ctx(&self, n: u32) -> Option<&str> {
         let node = &self.nodes[n as usize];

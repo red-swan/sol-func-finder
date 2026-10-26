@@ -30,7 +30,8 @@ fn file() -> PathBuf {
 pub fn load(fingerprint: u64) -> Option<Graph> {
     let bytes = std::fs::read(file()).ok()?;
     let (header, rest) = postcard::take_from_bytes::<Header>(&bytes).ok()?;
-    if header.magic != MAGIC || header.format != FORMAT_VERSION || header.fingerprint != fingerprint {
+    if header.magic != MAGIC || header.format != FORMAT_VERSION || header.fingerprint != fingerprint
+    {
         return None;
     }
     // A source deleted (or restored) without touching any artifact changes the result.

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 
 use crate::graph::Graph;
@@ -47,6 +47,12 @@ struct Args {
     /// has (declared and inherited), instead of searching for callers.
     #[arg(long)]
     list: bool,
+
+    /// Print only the entry points that reach the function, one
+    /// `Contract.function` per line (the contract it is called on), without
+    /// the calls in between.
+    #[arg(long)]
+    entries: bool,
 
     #[arg(long, hide = true)]
     dump_graph: bool,
@@ -103,9 +109,19 @@ fn try_run() -> Result<ExitCode> {
 
     if args.dump_graph {
         for (i, node) in graph.nodes.iter().enumerate() {
-            writeln!(out, "{}{}", graph.label(i as u32), if node.entry { " [entry]" } else { "" })?;
+            writeln!(
+                out,
+                "{}{}",
+                graph.label(i as u32),
+                if node.entry { " [entry]" } else { "" }
+            )?;
             for e in &graph.adj[i] {
-                writeln!(out, "    -> {}{}", if e.approx { "~" } else { "" }, graph.label(e.to))?;
+                writeln!(
+                    out,
+                    "    -> {}{}",
+                    if e.approx { "~" } else { "" },
+                    graph.label(e.to)
+                )?;
             }
         }
         out.flush()?;
@@ -129,7 +145,12 @@ fn try_run() -> Result<ExitCode> {
                 writeln!(out, "# {name}")?;
             }
             // Overridden functions leave the base node behind; keep the most derived.
-            nodes.sort_by_key(|&n| (graph.nodes[n as usize].sig.clone(), graph.inherited_ctx(n).is_some()));
+            nodes.sort_by_key(|&n| {
+                (
+                    graph.nodes[n as usize].sig.clone(),
+                    graph.inherited_ctx(n).is_some(),
+                )
+            });
             nodes.dedup_by_key(|&mut n| {
                 let node = &graph.nodes[n as usize];
                 (node.sig.clone(), node.kind)
@@ -138,7 +159,10 @@ fn try_run() -> Result<ExitCode> {
             for n in nodes {
                 let full = graph.name(n);
                 let decl = &graph.contracts[graph.nodes[n as usize].decl as usize].display;
-                let line = full.strip_prefix(decl.as_str()).and_then(|f| f.strip_prefix('.')).unwrap_or(&full);
+                let line = full
+                    .strip_prefix(decl.as_str())
+                    .and_then(|f| f.strip_prefix('.'))
+                    .unwrap_or(&full);
                 match graph.inherited_ctx(n) {
                     Some(_) => writeln!(out, "{line} (from {decl})")?,
                     None => writeln!(out, "{line}")?,
@@ -149,7 +173,11 @@ fn try_run() -> Result<ExitCode> {
         return Ok(code);
     }
 
-    let mode = if args.soft { render::Mode::Soft } else { render::Mode::Hard };
+    let mode = if args.soft {
+        render::Mode::Soft
+    } else {
+        render::Mode::Hard
+    };
     let mut code = ExitCode::SUCCESS;
     for (i, name) in args.names.iter().enumerate() {
         let targets = query::find_targets(&graph, name);
@@ -165,9 +193,21 @@ fn try_run() -> Result<ExitCode> {
             }
             writeln!(out, "# {name}")?;
         }
-        if !render::render(&graph, &targets, mode, &mut out)? {
+        let found = if args.entries {
+            let entries = render::entries(&graph, &targets, mode);
+            for e in &entries {
+                writeln!(out, "{e}")?;
+            }
+            !entries.is_empty()
+        } else {
+            render::render(&graph, &targets, mode, &mut out)?
+        };
+        if !found {
             out.flush()?;
-            eprintln!("no entry point reaches `{name}`{}", if args.soft { " through a `~` call" } else { "" });
+            eprintln!(
+                "no entry point reaches `{name}`{}",
+                if args.soft { " through a `~` call" } else { "" }
+            );
             code = ExitCode::FAILURE;
         }
     }

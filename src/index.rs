@@ -93,7 +93,13 @@ fn parse_selector(v: &Value) -> Option<[u8; 4]> {
 
 fn norm_type(t: &str) -> String {
     let mut out = t.to_string();
-    for w in [" memory", " calldata", " storage ref", " storage pointer", " payable"] {
+    for w in [
+        " memory",
+        " calldata",
+        " storage ref",
+        " storage pointer",
+        " payable",
+    ] {
         out = out.replace(w, "");
     }
     for p in ["contract ", "struct ", "enum "] {
@@ -168,7 +174,9 @@ fn declared_func(m: &Value, contract: usize) -> Option<Func> {
                 None,
             )
         }
-        "VariableDeclaration" if flag(m, "stateVariable", false) && s(m, "visibility") == "public" => {
+        "VariableDeclaration"
+            if flag(m, "stateVariable", false) && s(m, "visibility") == "public" =>
+        {
             let name = s(m, "name").to_string();
             (
                 FKind::Getter,
@@ -350,7 +358,12 @@ fn collect_decl_ids(v: &Value, out: &mut HashSet<i64>) {
     }
 }
 
-fn add_func<'a>(ix: &mut Index, bodies: &mut Vec<(usize, &'a Value)>, f: Option<Func>, node: &'a Value) {
+fn add_func<'a>(
+    ix: &mut Index,
+    bodies: &mut Vec<(usize, &'a Value)>,
+    f: Option<Func>,
+    node: &'a Value,
+) {
     let Some(f) = f else { return };
     let idx = ix.funcs.len();
     let c = f.contract;
@@ -425,7 +438,8 @@ fn classify(ix: &Index, call: &Value, found: &mut Found) {
                                 RawCall::Super(f)
                             } else if s(recv, "name") == "this" {
                                 RawCall::This(f)
-                            } else if refd(recv).is_some_and(|r| ix.contract_by_id.contains_key(&r)) {
+                            } else if refd(recv).is_some_and(|r| ix.contract_by_id.contains_key(&r))
+                            {
                                 RawCall::Specific(f)
                             } else {
                                 RawCall::External(f)

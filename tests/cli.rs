@@ -65,7 +65,8 @@ fn copy_dir(from: &Path, to: &Path) {
 
 fn bump_mtime(path: &Path) {
     let f = fs::OpenOptions::new().write(true).open(path).unwrap();
-    f.set_modified(SystemTime::now() + Duration::from_secs(60)).unwrap();
+    f.set_modified(SystemTime::now() + Duration::from_secs(60))
+        .unwrap();
 }
 
 #[test]
@@ -73,8 +74,14 @@ fn override_creates_inherited_entry_points() {
     let out = stdout(&query(&["record"]));
     // Inherited external function is an entry point on each concrete child,
     // reached through the hook override.
-    assert!(out.contains("  Vault._hook\n    Base.entry <- Vault\n"), "{out}");
-    assert!(out.contains("  Other._hook\n    Base.entry <- Other\n"), "{out}");
+    assert!(
+        out.contains("  Vault._hook\n    Base.entry <- Vault\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  Other._hook\n    Base.entry <- Other\n"),
+        "{out}"
+    );
     // Quiet does not override the hook, so Base.entry does not reach the target there.
     assert!(!out.contains("Base.entry <- Quiet"), "{out}");
 }
@@ -83,8 +90,14 @@ fn override_creates_inherited_entry_points() {
 fn abstract_contracts_and_excluded_files_are_not_shown() {
     let out = stdout(&query(&["record"]));
     // Base is abstract: its code shows up, but an entry point is always on a concrete contract.
-    for line in out.lines().filter(|l| l.trim_start().starts_with("Base.") && l.contains("<-")) {
-        assert!(!line.ends_with("<-") && !line.contains("<- Base"), "{line}\n{out}");
+    for line in out
+        .lines()
+        .filter(|l| l.trim_start().starts_with("Base.") && l.contains("<-"))
+    {
+        assert!(
+            !line.ends_with("<-") && !line.contains("<- Base"),
+            "{line}\n{out}"
+        );
     }
     assert!(!out.contains("FixtureTest"), "{out}");
 }
@@ -112,7 +125,10 @@ fn shared_paths_are_not_duplicated() {
 fn entry_point_contract_follows_the_arrow() {
     let out = stdout(&query(&["record"]));
     // Inherited chain: every line names where the code lives; only the entry point names its contract.
-    assert!(out.contains("  Base._inner\n    Base._mid\n      Base.chain <- Vault\n"), "{out}");
+    assert!(
+        out.contains("  Base._inner\n    Base._mid\n      Base.chain <- Vault\n"),
+        "{out}"
+    );
     // Declaring == concrete: nothing to add after the arrow.
     assert!(out.contains("Vault.diamond <-\n"), "{out}");
     assert!(!out.contains('@') && !out.contains("(from"), "{out}");
@@ -141,17 +157,30 @@ fn soft_mode_shows_only_chains_with_a_guessed_call() {
         out,
         "Sink.record <-\n  Base.tracked [modifier]\n    Vault.deposit <-\n      ~Router.route <-\n"
     );
-    assert_eq!(stdout(&query(&["--soft", "deposit"])), "Vault.deposit <-\n  ~Router.route <-\n");
+    assert_eq!(
+        stdout(&query(&["--soft", "deposit"])),
+        "Vault.deposit <-\n  ~Router.route <-\n"
+    );
     let o = query(&["--soft", "rec"]);
     assert!(!o.status.success());
-    assert!(stderr(&o).contains("no entry point reaches `rec` through a `~` call"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no entry point reaches `rec` through a `~` call"),
+        "{}",
+        stderr(&o)
+    );
 }
 
 #[test]
 fn library_free_function_super_and_this() {
     let out = stdout(&query(&["record"]));
-    assert!(out.contains("  Lib.sol.freeHelper\n    Vault.viaFree <-\n"), "{out}");
-    assert!(out.contains("  RecLib.viaLib\n    Vault.viaLib <-\n"), "{out}");
+    assert!(
+        out.contains("  Lib.sol.freeHelper\n    Vault.viaFree <-\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  RecLib.viaLib\n    Vault.viaLib <-\n"),
+        "{out}"
+    );
     assert!(
         out.contains("  Base._baseSuper\n    Vault._baseSuper\n      Vault.callSuper <-\n"),
         "{out}"
@@ -165,16 +194,16 @@ fn library_free_function_super_and_this() {
 #[test]
 fn recursion_is_marked() {
     let out = stdout(&query(&["Vault.rec"]));
-    assert_eq!(
-        out,
-        "Base.rec <- Vault\n  Base.rec <- Vault (recursive)\n"
-    );
+    assert_eq!(out, "Base.rec <- Vault\n  Base.rec <- Vault (recursive)\n");
 }
 
 #[test]
 fn a_target_calling_another_target_is_nested() {
     // Both Vault.viaLib and RecLib.viaLib match; the first calls the second.
-    assert_eq!(stdout(&query(&["viaLib"])), "RecLib.viaLib\n  Vault.viaLib <-\n");
+    assert_eq!(
+        stdout(&query(&["viaLib"])),
+        "RecLib.viaLib\n  Vault.viaLib <-\n"
+    );
 }
 
 #[test]
@@ -187,8 +216,18 @@ fn target_filters() {
     assert_eq!(stdout(&query(&["Vault.deposit"])), out);
     // Overloads are told apart by signature.
     let o = stdout(&query(&["overloaded(uint256)"]));
-    assert!(o.contains("Base.overloaded(uint256) <- Vault"), "{o}");
+    assert!(
+        o.contains("Base.overloaded(uint256) <- Other, Quiet, Vault"),
+        "{o}"
+    );
     assert!(!o.contains("address"), "{o}");
+}
+
+#[test]
+fn instances_of_one_function_share_a_top_line() {
+    // Base.overloaded is inherited by several contracts: one line, not one per contract.
+    let o = stdout(&query(&["overloaded(uint256)"]));
+    assert_eq!(o.matches("Base.overloaded(uint256)").count(), 1, "{o}");
 }
 
 #[test]
@@ -225,7 +264,11 @@ fn missing_asts_fail() {
     }
     let o = solff(&p.0, &["--no-cache", "record"]);
     assert!(!o.status.success());
-    assert!(stderr(&o).contains("no ASTs found under out"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no ASTs found under out"),
+        "{}",
+        stderr(&o)
+    );
 }
 
 #[test]
@@ -248,7 +291,10 @@ fn cache_matches_uncached_and_invalidates() {
 
     let cold = solff(&p.0, &["record"]);
     assert!(cache.exists());
-    assert_eq!(fs::read_to_string(p.0.join(".solff/.gitignore")).unwrap(), "*\n");
+    assert_eq!(
+        fs::read_to_string(p.0.join(".solff/.gitignore")).unwrap(),
+        "*\n"
+    );
     let warm = solff(&p.0, &["record"]);
     for o in [&cold, &warm] {
         assert_eq!(stdout(o), stdout(&uncached));
@@ -309,7 +355,11 @@ fn mixed_compilation_jobs_are_flagged() {
     out.push_str(rest);
     fs::write(&path, out).unwrap();
     let o = solff(&p.0, &["--no-cache", "record"]);
-    assert!(stderr(&o).contains("artifacts likely come from different compilation jobs"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("artifacts likely come from different compilation jobs"),
+        "{}",
+        stderr(&o)
+    );
 }
 
 #[test]
@@ -327,4 +377,32 @@ fn list_contract_functions() {
     let o = query(&["--list", "Nope"]);
     assert!(!o.status.success());
     assert!(stderr(&o).contains("no contract matching `Nope`"));
+}
+
+#[test]
+fn entries_lists_only_entry_points() {
+    let o = query(&["--entries", "record"]);
+    assert!(o.status.success());
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"Vault.diamond"));
+    assert!(lines.contains(&"Vault.entry"));
+    assert!(lines.contains(&"Other.entry"));
+    assert!(lines.contains(&"Vault.constructor"));
+    assert!(!lines.contains(&"Quiet.entry"));
+    assert!(!lines.contains(&"Router.route"));
+    // Nothing from in between, no tree markup, one per line, sorted, no repeats.
+    assert!(
+        !lines.contains(&"Vault._shared") && !out.contains("<-") && !out.contains("  "),
+        "{out}"
+    );
+    let mut sorted = lines.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(lines, sorted);
+
+    // Soft mode: only entry points whose chain has a guessed call.
+    let out = stdout(&query(&["--entries", "--soft", "record"]));
+    assert!(out.lines().any(|l| l == "Router.route"), "{out}");
+    assert!(!out.lines().any(|l| l == "Vault.diamond"), "{out}");
 }

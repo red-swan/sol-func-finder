@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use walkdir::WalkDir;
 
 pub struct Source {
@@ -71,7 +71,9 @@ fn ast_path(raw: &str) -> Option<String> {
         return Some(rest[..end].to_string());
     }
     let v: Value = serde_json::from_str(raw).ok()?;
-    v.get("absolutePath").and_then(Value::as_str).map(str::to_string)
+    v.get("absolutePath")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn probe(file: &Path) -> Probed {
@@ -86,8 +88,8 @@ fn probe(file: &Path) -> Probed {
 
 fn parse_ast(file: &Path) -> Result<Value> {
     let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-    let artifact: Artifact = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parsing {}", file.display()))?;
+    let artifact: Artifact =
+        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", file.display()))?;
     artifact
         .ast
         .with_context(|| format!("{} has no ast", file.display()))
@@ -147,7 +149,10 @@ pub fn load(files: &[PathBuf]) -> Result<Loaded> {
         unique.push((file, path));
     }
 
-    for (parsed, (_, path)) in par_map(&unique, |(file, _)| parse_ast(file)).into_iter().zip(&unique) {
+    for (parsed, (_, path)) in par_map(&unique, |(file, _)| parse_ast(file))
+        .into_iter()
+        .zip(&unique)
+    {
         loaded.sources.push(Source {
             path: path.clone(),
             ast: parsed?,

@@ -109,8 +109,7 @@ pub fn build_graph(ix: &Index, mut diag: Vec<String>) -> Graph {
     for ci in 0..b.ctxs.len() {
         let k = b.ctxs[ci].k;
         let kind = ix.contracts[k].kind;
-        let effective =
-            |ctx: &Ctx, f: usize| ctx.eff.get(&f).copied().unwrap_or(f) == f;
+        let effective = |ctx: &Ctx, f: usize| ctx.eff.get(&f).copied().unwrap_or(f) == f;
         let mut name_count: HashMap<&str, usize> = HashMap::new();
         for &f in &b.ctxs[ci].members {
             let func = &ix.funcs[f];
@@ -285,7 +284,12 @@ impl Builder<'_> {
             CKind::Library | CKind::Free => out.extend(self.direct(owner, f)),
             _ => {
                 let owner_concrete = is_context(ix, owner);
-                for &ci2 in self.implementers.get(&owner).map(Vec::as_slice).unwrap_or(&[]) {
+                for &ci2 in self
+                    .implementers
+                    .get(&owner)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                {
                     let ctx2 = &self.ctxs[ci2];
                     if let Some(&e) = ctx2.eff.get(&f)
                         && let Some(to) = self.node(ctx2.k, e)
