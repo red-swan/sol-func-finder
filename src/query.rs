@@ -67,3 +67,32 @@ pub fn contract_functions(g: &Graph, contract: &str) -> Vec<u32> {
         })
         .collect()
 }
+
+/// Output filter from `--include` / `--exclude`. A pattern with a `/` or ending
+/// in `.sol` is a substring of a source path; anything else is a contract name
+/// (plain or `path:Name`). A node matches when its declaring or concrete
+/// contract does.
+#[derive(Default)]
+pub struct Filter {
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+impl Filter {
+    fn matches(g: &Graph, n: u32, pat: &str) -> bool {
+        let node = &g.nodes[n as usize];
+        [node.decl, node.ctx].into_iter().any(|c| {
+            let c = &g.contracts[c as usize];
+            if pat.contains('/') || pat.ends_with(".sol") {
+                c.path.contains(pat)
+            } else {
+                c.name == pat || c.display == pat
+            }
+        })
+    }
+
+    pub fn keep(&self, g: &Graph, n: u32) -> bool {
+        (self.include.is_empty() || self.include.iter().any(|p| Self::matches(g, n, p)))
+            && !self.exclude.iter().any(|p| Self::matches(g, n, p))
+    }
+}

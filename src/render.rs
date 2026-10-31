@@ -71,7 +71,7 @@ pub fn render<W: Write>(g: &Graph, targets: &[u32], mode: Mode, out: W) -> io::R
 
 /// The entry points that reach a target in this mode, as `Contract.function`
 /// (the contract they are called on), sorted and without repeats.
-pub fn entries(g: &Graph, targets: &[u32], mode: Mode) -> Vec<String> {
+pub fn entries(g: &Graph, targets: &[u32], mode: Mode, keep: impl Fn(u32) -> bool) -> Vec<String> {
     let r = Renderer::new(g, mode, io::sink());
     let mut seen = vec![false; r.up.len()];
     let mut stack = Vec::new();
@@ -82,7 +82,7 @@ pub fn entries(g: &Graph, targets: &[u32], mode: Mode) -> Vec<String> {
     let mut found = Vec::new();
     while let Some((v, s)) = stack.pop() {
         // Soft mode only counts chains that contain a guessed call.
-        if g.nodes[v as usize].entry && (mode == Mode::Hard || s) {
+        if g.nodes[v as usize].entry && (mode == Mode::Hard || s) && keep(v) {
             found.push(g.concrete_name(v));
         }
         for (c, approx) in r.kids(v, s) {

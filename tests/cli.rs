@@ -368,11 +368,23 @@ fn list_contract_functions() {
     assert!(o.status.success());
     let out = stdout(&o);
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines.contains(&"deposit"));
-    assert!(lines.contains(&"entry (from Base)"));
+    assert!(lines.contains(&"Vault.deposit"));
+    assert!(lines.contains(&"Base.entry"));
+    // Internal functions and modifiers are hidden by default.
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains("_hook") || l.contains("[modifier]"))
+    );
+
+    let o = query(&["--list", "Vault", "--internal"]);
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"Vault.deposit"));
     // An override appears once, as the most derived.
-    assert_eq!(lines.iter().filter(|l| l.starts_with("_hook")).count(), 1);
-    assert!(lines.contains(&"_hook"));
+    assert_eq!(lines.iter().filter(|l| l.ends_with("._hook")).count(), 1);
+    assert!(lines.contains(&"Vault._hook"));
+    assert!(lines.contains(&"Base.tracked [modifier]"));
 
     let o = query(&["--list", "Nope"]);
     assert!(!o.status.success());
@@ -405,4 +417,55 @@ fn entries_lists_only_entry_points() {
     let out = stdout(&query(&["--entries", "--soft", "record"]));
     assert!(out.lines().any(|l| l == "Router.route"), "{out}");
     assert!(!out.lines().any(|l| l == "Vault.diamond"), "{out}");
+}
+
+#[test]
+fn include_exclude_filter_output() {
+    let o = query(&["--list", "Vault", "--include", "Base"]);
+    let out = stdout(&o);
+    assert!(out.lines().all(|l| l.starts_with("Base.")), "{out}");
+    assert!(out.contains("Base.entry"));
+
+    let o = query(&["--list", "Vault", "--exclude", "Base"]);
+    let out = stdout(&o);
+    assert!(!out.contains("Base."), "{out}");
+    assert!(out.contains("Vault.deposit"));
+
+    // Path patterns match by substring on the source path.
+    let o = query(&["--list", "Vault", "--include", "src/Base.sol"]);
+    assert!(stdout(&o).lines().all(|l| l.starts_with("Base.")));
+
+    let o = query(&["--entries", "record", "--exclude", "Other"]);
+    let out = stdout(&o);
+    assert!(out.contains("Vault.entry"));
+    assert!(!out.contains("Other.entry"), "{out}");
+
+    let o = query(&["record", "--include", "Nope"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--include/--exclude"));
+}
+
+#[test]
+fn list_paths_only_when_asked() {
+    let o = query(&["--list", "Vault"]);
+    let out = stdout(&o);
+    assert!(!out.contains(':') && !out.contains(".sol"), "{out}");
+
+    let o = query(&["--list", "Vault", "--paths"]);
+    let out = stdout(&o);
+    assert!(out.lines().all(|l| l.contains(".sol:")), "{out}");
+    assert!(out.contains("src/Base.sol:Base.entry"), "{out}");
+}
+
+#[test]
+fn list_hides_getters_unless_asked() {
+    let o = query(&["--list", "Sink"]);
+    assert!(!stdout(&o).contains("Sink.total"), "{}", stdout(&o));
+
+    let o = query(&["--list", "Sink", "--getters"]);
+    assert!(
+        stdout(&o).lines().any(|l| l == "Sink.total"),
+        "{}",
+        stdout(&o)
+    );
 }

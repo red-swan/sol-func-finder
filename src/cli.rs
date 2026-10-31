@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Parser;
 
-use crate::graph::Graph;
+use crate::graph::{FKind, Graph, Vis};
 use crate::{cache, fingerprint, index, loader, query, render, resolve};
 
 /// Print every call chain from an entry point down to the given function(s),
@@ -44,9 +44,38 @@ struct Args {
     soft: bool,
 
     /// Treat the arguments as contract names and list every function each
-    /// has (declared and inherited), instead of searching for callers.
+    /// has (declared and inherited) as `Declaring.function`, instead of
+    /// searching for callers.
     #[arg(long)]
     list: bool,
+
+    /// With `--list`, also list internal and private functions and modifiers
+    /// (by default only public and external ones are listed).
+    #[arg(long)]
+    internal: bool,
+
+    /// With `--list`, also list the getters the compiler generates for public
+    /// state variables (hidden by default).
+    #[arg(long)]
+    getters: bool,
+
+    /// With `--list`, put the source path in front of each line
+    /// (`path/File.sol:Contract.function`). Lines never carry a path otherwise.
+    #[arg(long)]
+    paths: bool,
+
+    /// Only print functions in these contracts or source files (repeatable).
+    /// A name with a `/` or ending in `.sol` matches a source path by
+    /// substring, anything else a contract name. Applies to the functions
+    /// printed: `--list` lines, `--entries` lines, and the top line of each
+    /// tree. The graph itself is unfiltered.
+    #[arg(long, value_name = "CONTRACT|PATH")]
+    include: Vec<String>,
+
+    /// Leave out functions in these contracts or source files (repeatable).
+    /// Same patterns as `--include`; wins over it.
+    #[arg(long, value_name = "CONTRACT|PATH")]
+    exclude: Vec<String>,
 
     /// Print only the entry points that reach the function, one
     /// `Contract.function` per line (the contract it is called on), without
@@ -136,11 +165,17 @@ fn try_run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    let filter = query::Filter {
+        include: args.include.clone(),
+        exclude: args.exclude.clone(),
+    };
+
     if args.list {
         let mut code = ExitCode::SUCCESS;
         for (i, name) in args.names.iter().enumerate() {
             let mut nodes = query::contract_functions(&graph, name);
-            if nodes.is_empty() {
+            let had = !nodes.is_empty();
+            if !had {
                 out.flush()?;
                 eprintln!("no contract matching `{name}`");
                 code = ExitCode::FAILURE;
@@ -163,18 +198,29 @@ fn try_run() -> Result<ExitCode> {
                 let node = &graph.nodes[n as usize];
                 (node.sig.clone(), node.kind)
             });
-            nodes.sort_by_key(|&n| graph.name(n));
-            for n in nodes {
-                let full = graph.name(n);
-                let decl = &graph.contracts[graph.nodes[n as usize].decl as usize].display;
-                let line = full
-                    .strip_prefix(decl.as_str())
-                    .and_then(|f| f.strip_prefix('.'))
-                    .unwrap_or(&full);
-                match graph.inherited_ctx(n) {
-                    Some(_) => writeln!(out, "{line} (from {decl})")?,
-                    None => writeln!(out, "{line}")?,
-                }
+            nodes.retain(|&n| {
+                (args.getters || graph.nodes[n as usize].kind != FKind::Getter)
+                    && (args.internal
+                        || matches!(graph.nodes[n as usize].vis, Vis::Public | Vis::External))
+                    && filter.keep(&graph, n)
+            });
+            let mut lines: Vec<String> = nodes
+                .iter()
+                .map(|&n| {
+                    // `name` carries a `path:` prefix for duplicate contract names; rebuild it.
+                    let full = graph.name(n);
+                    let decl = &graph.contracts[graph.nodes[n as usize].decl as usize];
+                    let rest = full.strip_prefix(decl.display.as_str()).unwrap_or(&full);
+                    if args.paths {
+                        format!("{}:{}{rest}", decl.path, decl.name)
+                    } else {
+                        format!("{}{rest}", decl.name)
+                    }
+                })
+                .collect();
+            lines.sort();
+            for line in lines {
+                writeln!(out, "{line}")?;
             }
         }
         out.flush()?;
@@ -188,10 +234,20 @@ fn try_run() -> Result<ExitCode> {
     };
     let mut code = ExitCode::SUCCESS;
     for (i, name) in args.names.iter().enumerate() {
-        let targets = query::find_targets(&graph, name);
-        if targets.is_empty() {
+        let mut targets = query::find_targets(&graph, name);
+        let had = !targets.is_empty();
+        if !args.entries {
+            targets.retain(|&n| filter.keep(&graph, n));
+        }
+        if !had {
             out.flush()?;
             eprintln!("no function matching `{name}`");
+            code = ExitCode::FAILURE;
+            continue;
+        }
+        if targets.is_empty() {
+            out.flush()?;
+            eprintln!("`{name}` matches only functions removed by --include/--exclude");
             code = ExitCode::FAILURE;
             continue;
         }
@@ -202,7 +258,7 @@ fn try_run() -> Result<ExitCode> {
             writeln!(out, "# {name}")?;
         }
         let found = if args.entries {
-            let entries = render::entries(&graph, &targets, mode);
+            let entries = render::entries(&graph, &targets, mode, |n| filter.keep(&graph, n));
             for e in &entries {
                 writeln!(out, "{e}")?;
             }
