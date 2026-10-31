@@ -232,7 +232,10 @@ fn try_run() -> Result<ExitCode> {
                         || matches!(graph.nodes[n as usize].vis, Vis::Public | Vis::External))
                     && filter.keep(&graph, n)
             });
-            let mut lines: Vec<String> = nodes
+            // Nodes of a contract are created in the compiler's order: most derived
+            // contract first through its bases, each in source order.
+            nodes.sort_unstable();
+            let lines: Vec<String> = nodes
                 .iter()
                 .map(|&n| {
                     // `name` carries a `path:` prefix for duplicate contract names; rebuild it.
@@ -246,7 +249,6 @@ fn try_run() -> Result<ExitCode> {
                     }
                 })
                 .collect();
-            lines.sort();
             for line in lines {
                 writeln!(out, "{line}")?;
             }

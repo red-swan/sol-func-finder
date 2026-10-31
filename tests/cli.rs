@@ -486,3 +486,13 @@ fn contracts_lists_deployable_only() {
     assert!(out.lines().any(|l| l == "src/Vault.sol:Vault"), "{out}");
     assert!(!out.contains("Other"), "{out}");
 }
+
+#[test]
+fn list_is_in_inheritance_order() {
+    let o = query(&["--list", "Vault", "--internal"]);
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    let last_vault = lines.iter().rposition(|l| l.starts_with("Vault.")).unwrap();
+    let first_base = lines.iter().position(|l| l.starts_with("Base.")).unwrap();
+    assert!(last_vault < first_base, "{out}");
+}
