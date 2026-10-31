@@ -18,6 +18,7 @@ pub struct Loaded {
     /// Source paths whose ASTs were found, with whether the file exists on disk.
     pub seen: Vec<(String, bool)>,
     pub artifacts_with_ast: usize,
+    pub artifacts_total: usize,
 }
 
 #[derive(Deserialize)]
@@ -127,6 +128,7 @@ pub fn load(files: &[PathBuf]) -> Result<Loaded> {
         sources: Vec::new(),
         seen: Vec::new(),
         artifacts_with_ast: 0,
+        artifacts_total: files.len(),
     };
 
     // Every contract in a file carries the file's whole AST: find each source's

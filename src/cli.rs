@@ -73,8 +73,16 @@ fn build(out_dir: &Path, files: &[PathBuf]) -> Result<(Graph, Vec<(String, bool)
     if loaded.artifacts_with_ast == 0 {
         bail!("no ASTs found under {}", out_dir.display());
     }
+    let mut diag = Vec::new();
+    let missing = loaded.artifacts_total - loaded.artifacts_with_ast;
+    if missing > 0 {
+        diag.push(format!(
+            "warning: {missing} of {} artifacts have no ast; contracts in them are missing from results. Rebuild with `forge build --ast`",
+            loaded.artifacts_total
+        ));
+    }
     let ix = index::build(&loaded.sources);
-    Ok((resolve::build_graph(&ix, Vec::new()), loaded.seen))
+    Ok((resolve::build_graph(&ix, diag), loaded.seen))
 }
 
 fn load_graph(args: &Args) -> Result<Graph> {
