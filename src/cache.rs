@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::graph::Graph;
 
 /// Bump whenever `Graph` or the resolution logic changes shape.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 const MAGIC: [u8; 8] = *b"SOLFFGR\0";
 
 #[derive(Serialize, Deserialize)]

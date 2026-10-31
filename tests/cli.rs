@@ -469,3 +469,20 @@ fn list_hides_getters_unless_asked() {
         stdout(&o)
     );
 }
+
+#[test]
+fn contracts_lists_deployable_only() {
+    let o = query(&["--contracts"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"Vault"));
+    assert!(!lines.contains(&"Base"), "{out}");
+    assert!(!lines.contains(&"IVault"), "{out}");
+    assert!(!lines.contains(&"RecLib"), "{out}");
+
+    let o = query(&["--contracts", "--paths", "--exclude", "src/Other.sol"]);
+    let out = stdout(&o);
+    assert!(out.lines().any(|l| l == "src/Vault.sol:Vault"), "{out}");
+    assert!(!out.contains("Other"), "{out}");
+}

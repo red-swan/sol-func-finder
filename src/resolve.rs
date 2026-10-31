@@ -85,6 +85,7 @@ pub fn build_graph(ix: &Index, mut diag: Vec<String>) -> Graph {
             },
             path: c.path.clone(),
             kind: c.kind,
+            is_abstract: c.is_abstract,
         })
         .collect();
 

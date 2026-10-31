@@ -33,6 +33,7 @@ pub struct ContractInfo {
     pub display: String,
     pub path: String,
     pub kind: CKind,
+    pub is_abstract: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

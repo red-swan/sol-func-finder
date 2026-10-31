@@ -27,7 +27,7 @@ use crate::{cache, fingerprint, index, loader, query, render, resolve};
 #[command(name = "solff", version)]
 struct Args {
     /// Function(s): `name`, `Contract.name`, `name(type,...)` or `0xselector`.
-    #[arg(required_unless_present = "dump_graph")]
+    #[arg(required_unless_present_any = ["dump_graph", "contracts"])]
     names: Vec<String>,
 
     /// Foundry artifacts directory.
@@ -54,12 +54,19 @@ struct Args {
     #[arg(long)]
     internal: bool,
 
+    /// List every deployable contract (non-abstract `contract`; not
+    /// interfaces, libraries or abstract contracts), one per line. Takes no
+    /// names. Use `--paths` for the source path and `--exclude lib/` to drop
+    /// dependencies.
+    #[arg(long, conflicts_with_all = ["list", "entries"])]
+    contracts: bool,
+
     /// With `--list`, also list the getters the compiler generates for public
     /// state variables (hidden by default).
     #[arg(long)]
     getters: bool,
 
-    /// With `--list`, put the source path in front of each line
+    /// With `--list` or `--contracts`, put the source path in front of each line
     /// (`path/File.sol:Contract.function`). Lines never carry a path otherwise.
     #[arg(long)]
     paths: bool,
@@ -169,6 +176,27 @@ fn try_run() -> Result<ExitCode> {
         include: args.include.clone(),
         exclude: args.exclude.clone(),
     };
+
+    if args.contracts {
+        let mut lines: Vec<String> = query::deployable_contracts(&graph)
+            .into_iter()
+            .filter(|c| filter.keep_contract(c))
+            .map(|c| {
+                if args.paths {
+                    format!("{}:{}", c.path, c.name)
+                } else {
+                    c.name.clone()
+                }
+            })
+            .collect();
+        lines.sort();
+        lines.dedup();
+        for line in lines {
+            writeln!(out, "{line}")?;
+        }
+        out.flush()?;
+        return Ok(ExitCode::SUCCESS);
+    }
 
     if args.list {
         let mut code = ExitCode::SUCCESS;

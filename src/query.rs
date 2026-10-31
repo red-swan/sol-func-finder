@@ -1,4 +1,4 @@
-use crate::graph::{FKind, Graph};
+use crate::graph::{CKind, ContractInfo, FKind, Graph};
 
 fn parse_selector(arg: &str) -> Option<[u8; 4]> {
     let hex = arg.strip_prefix("0x").unwrap_or(arg);
@@ -79,20 +79,37 @@ pub struct Filter {
 }
 
 impl Filter {
+    fn matches_contract(c: &ContractInfo, pat: &str) -> bool {
+        if pat.contains('/') || pat.ends_with(".sol") {
+            c.path.contains(pat)
+        } else {
+            c.name == pat || c.display == pat
+        }
+    }
+
     fn matches(g: &Graph, n: u32, pat: &str) -> bool {
         let node = &g.nodes[n as usize];
-        [node.decl, node.ctx].into_iter().any(|c| {
-            let c = &g.contracts[c as usize];
-            if pat.contains('/') || pat.ends_with(".sol") {
-                c.path.contains(pat)
-            } else {
-                c.name == pat || c.display == pat
-            }
-        })
+        [node.decl, node.ctx]
+            .into_iter()
+            .any(|c| Self::matches_contract(&g.contracts[c as usize], pat))
+    }
+
+    pub fn keep_contract(&self, c: &ContractInfo) -> bool {
+        (self.include.is_empty() || self.include.iter().any(|p| Self::matches_contract(c, p)))
+            && !self.exclude.iter().any(|p| Self::matches_contract(c, p))
     }
 
     pub fn keep(&self, g: &Graph, n: u32) -> bool {
         (self.include.is_empty() || self.include.iter().any(|p| Self::matches(g, n, p)))
             && !self.exclude.iter().any(|p| Self::matches(g, n, p))
     }
+}
+
+/// Deployable contracts: non-abstract `contract` definitions (not interfaces,
+/// libraries or abstract contracts), as (path, name).
+pub fn deployable_contracts(g: &Graph) -> Vec<&ContractInfo> {
+    g.contracts
+        .iter()
+        .filter(|c| c.kind == CKind::Contract && !c.is_abstract)
+        .collect()
 }
