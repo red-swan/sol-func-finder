@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::graph::{CKind, ContractInfo, Edge, FKind, Graph, Node, Vis};
+use crate::graph::{CKind, ContractInfo, Edge, EdgeKind, FKind, Graph, Node, Vis};
 use crate::index::{Index, RawCall};
 
 /// A contract whose functions are expanded into graph nodes.
@@ -22,7 +22,7 @@ struct Builder<'a> {
     implementers: HashMap<usize, Vec<usize>>,
     sel_map: HashMap<[u8; 4], Vec<(usize, u32)>>,
     ctor_root: HashMap<usize, u32>,
-    ext_cache: HashMap<usize, Vec<Edge>>,
+    ext_cache: HashMap<(usize, EdgeKind), Vec<Edge>>,
 }
 
 fn is_context(ix: &Index, c: usize) -> bool {
@@ -138,6 +138,7 @@ pub fn build_graph(ix: &Index, mut diag: Vec<String>) -> Graph {
                 selector: func.selector,
                 kind: func.kind,
                 vis: func.vis,
+                read_only: func.read_only,
                 entry,
                 overloaded: func.kind == FKind::Function
                     && name_count.get(func.name.as_str()).copied().unwrap_or(0) > 1,
@@ -178,10 +179,11 @@ pub fn build_graph(ix: &Index, mut diag: Vec<String>) -> Graph {
         }
     }
     for (root, rest) in ctor_chains {
-        adj[root as usize].extend(rest.into_iter().map(|to| Edge { to, approx: false }));
+        adj[root as usize].extend(rest.into_iter().map(Edge::certain));
     }
     for edges in &mut adj {
-        edges.sort_by_key(|e| (e.to, e.approx));
+        // Keep the tightest justification for each callee.
+        edges.sort_by_key(|e| (e.to, e.kind));
         edges.dedup_by_key(|e| e.to);
     }
 
@@ -215,7 +217,7 @@ impl Builder<'_> {
 
     fn direct(&self, k: usize, f: usize) -> Vec<Edge> {
         self.node(k, f)
-            .map(|to| vec![Edge { to, approx: false }])
+            .map(|to| vec![Edge::certain(to)])
             .unwrap_or_default()
     }
 
@@ -263,26 +265,59 @@ impl Builder<'_> {
             }
             RawCall::This(f) => match self.ctxs[ci].eff.get(&f).copied() {
                 Some(e) => self.direct(k, e),
-                None => self.external(f),
+                None => self.external(f, EdgeKind::Iface),
             },
-            RawCall::External(f) => self.external(f),
+            RawCall::External(f) => self.external(f, EdgeKind::Iface),
+            RawCall::Encoded(f) => self.external(f, EdgeKind::Encoded),
+            RawCall::Selector(sel) => self.by_selector(sel, |_| true),
             RawCall::New(c) => self
                 .ctor_root
                 .get(&c)
-                .map(|&to| vec![Edge { to, approx: false }])
+                .map(|&to| vec![Edge::certain(to)])
                 .unwrap_or_default(),
         }
     }
 
-    fn external(&mut self, f: usize) -> Vec<Edge> {
-        if let Some(cached) = self.ext_cache.get(&f) {
+    /// Every concrete contract's entry point with this selector (`keep` filters by ctx).
+    fn by_selector(&self, sel: [u8; 4], keep: impl Fn(usize) -> bool) -> Vec<Edge> {
+        self.sel_map
+            .get(&sel)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|&&(ci, _)| keep(ci))
+            .map(|&(_, to)| Edge {
+                to,
+                kind: EdgeKind::Selector,
+            })
+            .collect()
+    }
+
+    /// Callees of a call to `f` on a receiver of unknown concrete type. `via` is the
+    /// kind of the edges to the in-hierarchy implementers (`Iface` for an ordinary call,
+    /// `Encoded` for `abi.encodeCall`); contracts outside the hierarchy that share the
+    /// selector are always `Selector` edges.
+    fn external(&mut self, f: usize, via: EdgeKind) -> Vec<Edge> {
+        if let Some(cached) = self.ext_cache.get(&(f, via)) {
             return cached.clone();
         }
         let ix = self.ix;
         let owner = ix.funcs[f].contract;
         let mut out = Vec::new();
         match ix.contracts[owner].kind {
-            CKind::Library | CKind::Free => out.extend(self.direct(owner, f)),
+            CKind::Library | CKind::Free => {
+                // A library or free function has no receiver to guess.
+                let kind = if via == EdgeKind::Iface {
+                    EdgeKind::Certain
+                } else {
+                    via
+                };
+                out.extend(
+                    self.direct(owner, f)
+                        .into_iter()
+                        .map(|e| Edge { kind, ..e }),
+                )
+            }
             _ => {
                 let owner_concrete = is_context(ix, owner);
                 for &ci2 in self
@@ -295,22 +330,21 @@ impl Builder<'_> {
                     if let Some(&e) = ctx2.eff.get(&f)
                         && let Some(to) = self.node(ctx2.k, e)
                     {
+                        let certain = via == EdgeKind::Iface && owner_concrete && ctx2.k == owner;
                         out.push(Edge {
                             to,
-                            approx: !(owner_concrete && ctx2.k == owner),
+                            kind: if certain { EdgeKind::Certain } else { via },
                         });
                     }
                 }
                 if let Some(sel) = ix.funcs[f].selector {
-                    for &(ci2, to) in self.sel_map.get(&sel).map(Vec::as_slice).unwrap_or(&[]) {
-                        if !self.ctxs[ci2].lin_set.contains(&owner) {
-                            out.push(Edge { to, approx: true });
-                        }
-                    }
+                    out.extend(
+                        self.by_selector(sel, |ci2| !self.ctxs[ci2].lin_set.contains(&owner)),
+                    );
                 }
             }
         }
-        self.ext_cache.insert(f, out.clone());
+        self.ext_cache.insert((f, via), out.clone());
         out
     }
 }

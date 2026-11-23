@@ -21,6 +21,12 @@ pub enum RawCall {
     /// `new X()`, holds the contract index.
     New(usize),
     Modifier(usize),
+    /// `abi.encodeCall(X.f, ..)` or `abi.encodeWithSelector(X.f.selector, ..)`: the
+    /// function is known, the callee contract is not.
+    Encoded(usize),
+    /// Selector known only as a value (`0x12345678`, `bytes4(keccak256("f(address)"))`,
+    /// `abi.encodeWithSignature`).
+    Selector([u8; 4]),
 }
 
 pub struct Contract {
@@ -41,6 +47,8 @@ pub struct Func {
     pub selector: Option<[u8; 4]>,
     pub kind: FKind,
     pub vis: Vis,
+    /// `view` or `pure` (public-variable getters count).
+    pub read_only: bool,
     pub contract: usize,
     pub base: Vec<i64>,
     pub implemented: bool,
@@ -143,7 +151,7 @@ fn base_ids(v: &Value, key: &str) -> Vec<i64> {
 }
 
 fn declared_func(m: &Value, contract: usize) -> Option<Func> {
-    let (kind, name, vis, base, implemented, sig, selector) = match nt(m) {
+    let (kind, name, vis, read_only, base, implemented, sig, selector) = match nt(m) {
         "FunctionDefinition" => {
             let kind = match s(m, "kind") {
                 "constructor" => FKind::Constructor,
@@ -156,6 +164,7 @@ fn declared_func(m: &Value, contract: usize) -> Option<Func> {
                 kind,
                 name.clone(),
                 vis_of(m),
+                matches!(s(m, "stateMutability"), "view" | "pure"),
                 base_ids(m, "baseFunctions"),
                 flag(m, "implemented", true),
                 signature(&name, m),
@@ -168,6 +177,7 @@ fn declared_func(m: &Value, contract: usize) -> Option<Func> {
                 FKind::Modifier,
                 name.clone(),
                 Vis::Internal,
+                false,
                 base_ids(m, "baseModifiers"),
                 m.get("body").is_some_and(|b| !b.is_null()),
                 signature(&name, m),
@@ -182,6 +192,7 @@ fn declared_func(m: &Value, contract: usize) -> Option<Func> {
                 FKind::Getter,
                 name.clone(),
                 Vis::Public,
+                true,
                 base_ids(m, "baseFunctions"),
                 true,
                 format!("{name}()"),
@@ -197,6 +208,7 @@ fn declared_func(m: &Value, contract: usize) -> Option<Func> {
         selector,
         kind,
         vis,
+        read_only,
         contract,
         base,
         implemented,
@@ -404,6 +416,14 @@ fn classify(ix: &Index, call: &Value, found: &mut Found) {
             None => return,
         }
     }
+    if nt(callee) == "MemberAccess"
+        && callee
+            .get("expression")
+            .is_some_and(|e| nt(e) == "Identifier" && s(e, "name") == "abi")
+    {
+        encoded(ix, s(callee, "memberName"), arr(call, "arguments"), found);
+        return;
+    }
     match nt(callee) {
         "Identifier" => {
             let r = refd(callee);
@@ -466,6 +486,90 @@ fn classify(ix: &Index, call: &Value, found: &mut Found) {
             }
         }
         "ElementaryTypeNameExpression" => {}
+        _ => {}
+    }
+}
+
+/// The function a `X.f` expression names, if it resolves to a declared one.
+fn function_ref(ix: &Index, e: &Value) -> Option<usize> {
+    if nt(e) != "MemberAccess" {
+        return None;
+    }
+    refd(e).and_then(|r| ix.func_by_id.get(&r).copied())
+}
+
+fn hex_bytes(h: &str) -> Option<Vec<u8>> {
+    if !h.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..h.len() / 2)
+        .map(|i| u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok())
+        .collect()
+}
+
+fn keccak4(bytes: &[u8]) -> [u8; 4] {
+    use sha3::{Digest, Keccak256};
+    let hash = Keccak256::digest(bytes);
+    [hash[0], hash[1], hash[2], hash[3]]
+}
+
+/// A selector given as a value: a 4-byte hex literal, `bytes4(..)` of one, or
+/// `bytes4(keccak256("f(address)"))`.
+fn selector_value(e: &Value) -> Option<[u8; 4]> {
+    match nt(e) {
+        "Literal" if s(e, "kind") == "number" => {
+            let bytes = hex_bytes(s(e, "value").strip_prefix("0x")?)?;
+            <[u8; 4]>::try_from(bytes).ok()
+        }
+        "FunctionCall" => {
+            let args = arr(e, "arguments");
+            let first = args.first()?;
+            match s(e, "kind") {
+                "typeConversion" => selector_value(first),
+                "functionCall"
+                    if e.get("expression")
+                        .is_some_and(|c| nt(c) == "Identifier" && s(c, "name") == "keccak256") =>
+                {
+                    string_literal(first).map(|sig| keccak4(&sig))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn string_literal(e: &Value) -> Option<Vec<u8>> {
+    (nt(e) == "Literal" && s(e, "kind") == "string")
+        .then(|| hex_bytes(s(e, "hexValue")))
+        .flatten()
+}
+
+/// The `abi.encode*` forms that name a call target in their first argument.
+fn encoded(ix: &Index, member: &str, args: &[Value], found: &mut Found) {
+    let Some(first) = args.first() else { return };
+    match member {
+        "encodeCall" => {
+            if let Some(f) = function_ref(ix, first) {
+                found.calls.push(RawCall::Encoded(f));
+            }
+        }
+        "encodeWithSelector" => {
+            // `X.f.selector` resolves by declaration; anything else only by value.
+            let named = (nt(first) == "MemberAccess" && s(first, "memberName") == "selector")
+                .then(|| first.get("expression").and_then(|e| function_ref(ix, e)))
+                .flatten();
+            if let Some(f) = named {
+                found.calls.push(RawCall::Encoded(f));
+            } else if let Some(sel) = selector_value(first) {
+                found.calls.push(RawCall::Selector(sel));
+            }
+        }
+        "encodeWithSignature" => {
+            if let Some(sig) = string_literal(first) {
+                found.calls.push(RawCall::Selector(keccak4(&sig)));
+            }
+        }
         _ => {}
     }
 }

@@ -47,16 +47,68 @@ pub struct Node {
     pub selector: Option<[u8; 4]>,
     pub kind: FKind,
     pub vis: Vis,
+    /// `view` or `pure`.
+    pub read_only: bool,
     pub entry: bool,
     /// Another effective function with the same name exists in `ctx`.
     pub overloaded: bool,
 }
 
+/// How a call edge was established, from certain to loosest. A chain is filed
+/// under the loosest edge it contains.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
+pub enum EdgeKind {
+    /// Direct call on a known contract, library or free function.
+    Certain,
+    /// Call through an interface or base type: the callee is any in-scope implementer.
+    Iface,
+    /// `abi.encodeCall(X.f, ..)` / `abi.encodeWithSelector(X.f.selector, ..)`: the
+    /// function is known from the AST, the callee contract is not.
+    Encoded,
+    /// Matched by selector value only: any contract with a function of that selector.
+    Selector,
+}
+
+impl EdgeKind {
+    /// The guessed kinds, tightest first (one output section each).
+    pub const GUESSED: [EdgeKind; 3] = [EdgeKind::Iface, EdgeKind::Encoded, EdgeKind::Selector];
+
+    /// Line prefix: one tilde per step away from certain.
+    pub fn marker(self) -> &'static str {
+        match self {
+            EdgeKind::Certain => "",
+            EdgeKind::Iface => "~",
+            EdgeKind::Encoded => "~~",
+            EdgeKind::Selector => "~~~",
+        }
+    }
+
+    /// Header of the `--soft` section for chains whose loosest edge is this kind.
+    pub fn title(self) -> &'static str {
+        match self {
+            EdgeKind::Certain => "certain calls",
+            EdgeKind::Iface => "~ call through an interface or base type (AST)",
+            EdgeKind::Encoded => {
+                "~~ encoded call (abi.encodeCall / encodeWithSelector on X.f.selector)"
+            }
+            EdgeKind::Selector => "~~~ selector value match",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Edge {
     pub to: u32,
-    /// Interface / selector-matched edge (over-approximation).
-    pub approx: bool,
+    pub kind: EdgeKind,
+}
+
+impl Edge {
+    pub fn certain(to: u32) -> Edge {
+        Edge {
+            to,
+            kind: EdgeKind::Certain,
+        }
+    }
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]

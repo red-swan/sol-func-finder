@@ -14,10 +14,21 @@ use crate::{cache, fingerprint, index, loader, query, render, resolve};
 /// Prints the function, then indented below it everything that calls it, and
 /// so on up to the entry points, which are marked `<-`.
 ///
-/// By default only chains of certain calls are shown. Calls through an
-/// interface or base type are guesses (every in-scope contract that could be
-/// the callee); a `~` line calls the line above it through such a guess, and
-/// `--soft` shows the chains that contain one.
+/// By default only chains of certain calls are shown. Some calls are guesses:
+/// the callee is any in-scope contract that could be it. A line with a `~`
+/// prefix calls the line above it through a guess, and `--soft` shows the
+/// chains that contain one, in sections by how the guess was made (a chain
+/// goes in the section of its loosest guess):
+///
+///   `~`    call through an interface or base type (read from the AST)
+///
+///   `~~`   encoded call: `abi.encodeCall(X.f, ..)` or
+///          `abi.encodeWithSelector(X.f.selector, ..)`; the function is known,
+///          the contract it is sent to is not
+///
+///   `~~~`  selector value only: a literal selector, `bytes4(keccak256("f()"))`
+///          or `abi.encodeWithSignature`, or a different contract with the
+///          same selector
 ///
 /// Limits: .call/.delegatecall/.staticcall, function pointers and proxies are
 /// not resolved, so chains through them are missing. Operator overloads and
@@ -60,6 +71,10 @@ struct Args {
     /// dependencies.
     #[arg(long, conflicts_with_all = ["list", "entries"])]
     contracts: bool,
+
+    /// With `--list`, leave out `view` and `pure` functions (and getters).
+    #[arg(long)]
+    no_view: bool,
 
     /// With `--list`, also list the getters the compiler generates for public
     /// state variables (hidden by default).
@@ -160,12 +175,7 @@ fn try_run() -> Result<ExitCode> {
                 if node.entry { " [entry]" } else { "" }
             )?;
             for e in &graph.adj[i] {
-                writeln!(
-                    out,
-                    "    -> {}{}",
-                    if e.approx { "~" } else { "" },
-                    graph.label(e.to)
-                )?;
+                writeln!(out, "    -> {}{}", e.kind.marker(), graph.label(e.to))?;
             }
         }
         out.flush()?;
@@ -227,7 +237,8 @@ fn try_run() -> Result<ExitCode> {
                 (node.sig.clone(), node.kind)
             });
             nodes.retain(|&n| {
-                (args.getters || graph.nodes[n as usize].kind != FKind::Getter)
+                (!args.no_view || !graph.nodes[n as usize].read_only)
+                    && (args.getters || graph.nodes[n as usize].kind != FKind::Getter)
                     && (args.internal
                         || matches!(graph.nodes[n as usize].vis, Vis::Public | Vis::External))
                     && filter.keep(&graph, n)
@@ -288,11 +299,19 @@ fn try_run() -> Result<ExitCode> {
             writeln!(out, "# {name}")?;
         }
         let found = if args.entries {
-            let entries = render::entries(&graph, &targets, mode, |n| filter.keep(&graph, n));
-            for e in &entries {
-                writeln!(out, "{e}")?;
+            let sections = render::entries(&graph, &targets, mode, |n| filter.keep(&graph, n));
+            for (i, (kind, entries)) in sections.iter().enumerate() {
+                if args.soft {
+                    if i > 0 {
+                        writeln!(out)?;
+                    }
+                    writeln!(out, "## {}", kind.title())?;
+                }
+                for e in entries {
+                    writeln!(out, "{e}")?;
+                }
             }
-            !entries.is_empty()
+            !sections.is_empty()
         } else {
             render::render(&graph, &targets, mode, &mut out)?
         };
@@ -300,7 +319,11 @@ fn try_run() -> Result<ExitCode> {
             out.flush()?;
             eprintln!(
                 "no entry point reaches `{name}`{}",
-                if args.soft { " through a `~` call" } else { "" }
+                if args.soft {
+                    " through a guessed call"
+                } else {
+                    ""
+                }
             );
             code = ExitCode::FAILURE;
         }

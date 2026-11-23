@@ -7,4 +7,8 @@ contract Sink {
     function record(uint256 x) external {
         total += x;
     }
+
+    function peek() external view returns (uint256) {
+        return total;
+    }
 }

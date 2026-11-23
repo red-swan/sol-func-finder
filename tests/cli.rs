@@ -155,16 +155,16 @@ fn soft_mode_shows_only_chains_with_a_guessed_call() {
     let out = stdout(&query(&["--soft", "record"]));
     assert_eq!(
         out,
-        "Sink.record <-\n  Base.tracked [modifier]\n    Vault.deposit <-\n      ~Router.route <-\n"
+        "## ~ call through an interface or base type (AST)\nSink.record <-\n  Base.tracked [modifier]\n    Vault.deposit <-\n      ~Router.route <-\n"
     );
     assert_eq!(
         stdout(&query(&["--soft", "deposit"])),
-        "Vault.deposit <-\n  ~Router.route <-\n"
+        "## ~ call through an interface or base type (AST)\nVault.deposit <-\n  ~Router.route <-\n"
     );
     let o = query(&["--soft", "rec"]);
     assert!(!o.status.success());
     assert!(
-        stderr(&o).contains("no entry point reaches `rec` through a `~` call"),
+        stderr(&o).contains("no entry point reaches `rec` through a guessed call"),
         "{}",
         stderr(&o)
     );
@@ -495,4 +495,88 @@ fn list_is_in_inheritance_order() {
     let last_vault = lines.iter().rposition(|l| l.starts_with("Vault.")).unwrap();
     let first_base = lines.iter().position(|l| l.starts_with("Base.")).unwrap();
     assert!(last_vault < first_base, "{out}");
+}
+
+#[test]
+fn no_view_hides_view_and_pure() {
+    let o = query(&["--list", "Sink"]);
+    assert!(
+        stdout(&o).lines().any(|l| l == "Sink.peek"),
+        "{}",
+        stdout(&o)
+    );
+
+    let o = query(&["--list", "Sink", "--no-view"]);
+    let out = stdout(&o);
+    assert!(!out.contains("Sink.peek"), "{out}");
+    assert!(out.lines().any(|l| l == "Sink.record"), "{out}");
+
+    // Getters are read-only too.
+    let o = query(&["--list", "Sink", "--getters", "--no-view"]);
+    assert!(!stdout(&o).contains("Sink.total"), "{}", stdout(&o));
+}
+
+#[test]
+fn soft_mode_sections_by_how_the_guess_was_made() {
+    let out = stdout(&query(&["--soft", "Pinger.ping"]));
+    assert_eq!(
+        out,
+        "\
+## ~ call through an interface or base type (AST)
+Pinger.ping <-
+  ~Encoder.viaIface <-
+
+## ~~ encoded call (abi.encodeCall / encodeWithSelector on X.f.selector)
+Pinger.ping <-
+  ~~Encoder.viaCall <-
+    ~Mixed.outer <-
+  ~~Encoder.viaSelector <-
+
+## ~~~ selector value match
+Pinger.ping <-
+  ~~~Encoder.viaKeccak <-
+  ~~~Encoder.viaLiteral <-
+  ~~~Encoder.viaSignature <-
+"
+    );
+    // Encoded calls are guesses: the default view does not show them.
+    assert_eq!(stdout(&query(&["Pinger.ping"])), "Pinger.ping <-\n");
+}
+
+#[test]
+fn a_function_outside_the_interface_is_reached_by_selector_only() {
+    let out = stdout(&query(&["--soft", "Unrelated.ping"]));
+    assert!(
+        out.starts_with("## ~~~ selector value match\nUnrelated.ping <-\n"),
+        "{out}"
+    );
+    assert_eq!(out.matches("## ").count(), 1, "{out}");
+    // Every caller above is guessed by selector, including the interface call.
+    assert!(out.contains("  ~~~Encoder.viaIface <-\n"), "{out}");
+    assert!(
+        out.contains("  ~~~Encoder.viaCall <-\n    ~Mixed.outer <-\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn soft_entries_are_sectioned_too() {
+    let out = stdout(&query(&["--soft", "--entries", "Pinger.ping"]));
+    assert_eq!(
+        out,
+        "\
+## ~ call through an interface or base type (AST)
+Encoder.viaIface
+
+## ~~ encoded call (abi.encodeCall / encodeWithSelector on X.f.selector)
+Encoder.viaCall
+Encoder.viaSelector
+Mixed.outer
+
+## ~~~ selector value match
+Encoder.viaKeccak
+Encoder.viaLiteral
+Encoder.viaSignature
+"
+    );
 }
